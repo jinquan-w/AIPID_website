@@ -1,0 +1,16 @@
+# AIPID 温控系统 - Python 依赖
+# 安装: pip install -r requirements.txt
+
+# Web 框架
+flask>=3.0
+flask-cors>=4.0
+flask-sqlalchemy>=3.1
+
+# 数据库驱动
+pymysql>=1.1
+
+# 密码哈希
+bcrypt>=4.1
+
+# 生产 WSGI 服务器
+gunicorn>=22.0

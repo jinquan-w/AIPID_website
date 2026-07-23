@@ -1,0 +1,73 @@
+# ============================================================
+# AIPID 温控系统 - Docker Compose 部署
+# 使用方式:
+#   docker-compose up -d
+# ============================================================
+
+version: '3.8'
+
+services:
+  # ---------- MySQL 数据库 ----------
+  mysql:
+    image: mysql:8.0
+    container_name: aipid-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root123}
+      MYSQL_DATABASE: pid_control
+      MYSQL_USER: aipid
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aipid123}
+    ports:
+      - "127.0.0.1:3306:3306"  # 仅本地访问
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - aipid_net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------- Flask 后端 ----------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aipid-backend
+    restart: always
+    environment:
+      MYSQL_URI: mysql+pymysql://aipid:${MYSQL_PASSWORD:-aipid123}@mysql:3306/pid_control
+      SECRET_KEY: ${SECRET_KEY:-change-this-to-a-random-secret-key}
+    ports:
+      - "127.0.0.1:5000:5000"  # 仅 Nginx 访问
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - aipid_net
+
+  # ---------- Nginx 反向代理 ----------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: aipid-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - backend
+    networks:
+      - aipid_net
+
+volumes:
+  mysql_data:
+
+networks:
+  aipid_net:
+    driver: bridge
