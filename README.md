@@ -124,7 +124,7 @@ npm run build
 cd ..
 
 # 4. 启动所有服务
-docker-compose up -d
+docker compose up -d
 
 # 5. 访问
 # https://localhost
