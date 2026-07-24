@@ -120,8 +120,8 @@
             <!-- 批次详情（展开时显示） -->
             <div v-if="expandedBatches[batch.batch_index]" class="batch-detail">
               <!-- 最新批次直接显示帧数据 -->
-              <div v-if="batch.batch_index === 0 && batch.frames && batch.frames.length > 0">
-                <div class="table-wrapper">
+              <div v-if="batch.batch_index === 0">
+                <div v-if="batch.frames && batch.frames.length > 0" class="table-wrapper">
                   <table>
                     <thead>
                       <tr>
@@ -157,6 +157,7 @@
                     </tbody>
                   </table>
                 </div>
+                <div v-else class="batch-loading">暂无帧数据</div>
               </div>
               <!-- 历史批次：点击加载帧数据 -->
               <div v-else-if="batch.batch_index > 0">
@@ -308,8 +309,10 @@ export default {
       deviceStatus: 'offline',
       deviceLabel: '未连接',
       lastSeenAgo: null,
-      // 批次展开状态
+      // 批次展开状态（使用对象，存储每个 batch_index 的展开状态）
       expandedBatches: {},
+      // 强制刷新计数器
+      refreshKey: 0,
       // 下发 PID 指令弹窗
       showCmdModal: false,
       issuing: false,
@@ -366,7 +369,7 @@ export default {
     async loadData() {
       try {
         const [batchesRes, latestRes, pendingRes, deviceRes] = await Promise.all([
-          axios.get('/api/frames/batches?limit=100'),
+          axios.get('/api/frames/batches?limit=500'),
           axios.get('/api/frames/latest'),
           axios.get('/api/pending_command'),
           axios.get('/api/device/status')
@@ -374,25 +377,33 @@ export default {
 
         // 处理批次数据
         const batchData = batchesRes.data
-        this.batches = batchData.batches || []
+        const newBatches = batchData.batches || []
         this.totalFrames = batchData.total_frames || 0
         this.totalBatches = batchData.total_batches || 0
 
-        // 为每个历史批次添加 loadedFrames 和 loading 状态
-        this.batches.forEach(b => {
-          if (b.batch_index > 0) {
-            if (!('loadedFrames' in b)) {
-              this.$set(b, 'loadedFrames', null)
+        // 直接替换 batches 数组
+        // 同时保留已展开的历史批次加载的帧数据
+        if (newBatches.length > 0) {
+          // 从旧 batches 中提取已加载的历史帧数据
+          const loadedData = {}
+          this.batches.forEach(b => {
+            if (b.batch_index > 0 && b.loadedFrames) {
+              loadedData[b.batch_index] = b.loadedFrames
             }
-            if (!('loading' in b)) {
-              this.$set(b, 'loading', false)
+          })
+          // 合并到新批次中
+          newBatches.forEach(b => {
+            if (b.batch_index > 0 && loadedData[b.batch_index]) {
+              b.loadedFrames = loadedData[b.batch_index]
+              b.loading = false
             }
-          }
-        })
-
-        // 默认展开最新批次
-        if (this.batches.length > 0) {
-          this.$set(this.expandedBatches, 0, true)
+          })
+          // 替换整个数组
+          this.batches = newBatches
+          // 确保最新批次默认展开（Vue 3 直接赋值即可）
+          this.expandedBatches[0] = true
+        } else {
+          this.batches = []
         }
 
         this.latestFrame = latestRes.data || null
@@ -410,24 +421,28 @@ export default {
       }
     },
 
-    async toggleBatch(batchIndex) {
-      const isExpanded = this.expandedBatches[batchIndex]
-      this.$set(this.expandedBatches, batchIndex, !isExpanded)
+    toggleBatch(batchIndex) {
+      // Vue 3 的 Proxy 响应式系统会自动追踪对象属性的增删
+      const isCurrentlyExpanded = this.expandedBatches[batchIndex]
+      if (isCurrentlyExpanded) {
+        delete this.expandedBatches[batchIndex]
+      } else {
+        this.expandedBatches[batchIndex] = true
+      }
 
       // 如果是展开历史批次且尚未加载数据，则加载
-      if (!isExpanded && batchIndex > 0) {
+      if (!isCurrentlyExpanded && batchIndex > 0) {
         const batch = this.batches.find(b => b.batch_index === batchIndex)
         if (batch && !batch.loadedFrames) {
           batch.loading = true
-          try {
-            const res = await axios.get(`/api/frames/batch/${batchIndex}?limit=500`)
+          axios.get(`/api/frames/batch/${batchIndex}?limit=500`).then(res => {
             batch.loadedFrames = res.data.frames || []
-          } catch (err) {
+          }).catch(err => {
             console.error(`[Dashboard] 加载批次 ${batchIndex} 失败:`, err)
             batch.loadedFrames = []
-          } finally {
+          }).finally(() => {
             batch.loading = false
-          }
+          })
         }
       }
     },

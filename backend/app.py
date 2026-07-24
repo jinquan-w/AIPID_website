@@ -180,13 +180,13 @@ def get_frame_batches():
     按时间间隔分组：相邻帧间隔 > 60 秒视为不同批次
     返回批次摘要信息（最新批次包含具体帧数据）
     """
-    limit = request.args.get('limit', 100, type=int)
+    limit = request.args.get('limit', 500, type=int)
     frames = FeatureFrame.query.order_by(
         FeatureFrame.timestamp.desc()
     ).limit(limit).all()
 
     if not frames:
-        return jsonify({'batches': [], 'total_frames': 0})
+        return jsonify({'batches': [], 'total_frames': 0, 'total_batches': 0})
 
     # 按时间间隔分组
     batches = []
