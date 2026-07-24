@@ -89,6 +89,9 @@ AIPID_website/
 │           ├── Register.vue      # 注册页面
 │           └── Dashboard.vue     # 数据仪表板（10s 自动刷新）
 │
+├── simulator/                    # 边缘侧设备模拟器
+│   └── simulate_device.py        # 3 分钟训练模式模拟器
+│
 ├── mysql/
 │   └── init.sql                  # 数据库初始化脚本（4 张表）
 │
@@ -259,6 +262,49 @@ MySQL (内网)
 - **Gunicorn** 多进程运行 Flask，提高并发处理能力
 - **MySQL** 仅内网访问，不对外暴露端口
 - **环境变量** 注入数据库连接串和密钥，不硬编码在配置文件中
+
+---
+
+## 🧪 边缘侧设备模拟器
+
+`simulator/simulate_device.py` 是一个 Python 脚本，用于模拟树莓派通过 USB-RS485 连接温控设备后的行为，方便开发和测试。
+
+### 功能
+
+- **上行模拟**：每 5 秒生成一个特征帧并上传到 `/api/upload_frame`
+- **下行模拟**：每 30 秒查询 `/api/pending_command`，如有指令则调用 `/api/apply_command` 确认应用
+- **3 分钟训练模式**：模拟 3 个周期的工况变化
+
+### 训练模式场景
+
+| 周期 | 时间 | 工况 | 特征 |
+|------|------|------|------|
+| 周期 1 | 0~60s | 稳态运行 | KP≈2.5, TI≈60, TD≈15, IAE<1, 功率≈45W |
+| 周期 2 | 60~120s | 轻微扰动 | KP≈2.8, TI≈55, TD≈12, IAE≈2, 功率≈55W |
+| 周期 3 | 120~180s | 显著扰动（异常） | KP≈1.2, TI≈80, TD≈5, IAE≈8, 功率≈80W |
+
+每个周期内：**55 秒稳态 + 5 秒扰动**，扰动阶段指标会明显恶化。
+
+### 用法
+
+```bash
+# 连接本地 Docker 服务
+python simulator/simulate_device.py
+
+# 连接远程树莓派
+python simulator/simulate_device.py --url http://172.160.100.141
+
+# 指定间隔（默认 5 秒）
+python simulator/simulate_device.py --interval 3
+```
+
+### 输出示例
+
+```
+[01/36]   0s/180s | 周期1 稳态 | KP=2.53 TI=61.1 TD=15.3 | IAE=0.52 Pwr=45.1 | 状态=正常 | ✓ frame_id=7
+[12/36]  55s/180s | 周期1 ⚠ 扰动 | KP=2.44 TI=60.0 TD=15.0 | IAE=0.81 Pwr=53.8 | 状态=警告 | ✓ frame_id=18
+[36/36] 176s/180s | 周期3 ⚠ 扰动 | KP=0.96 TI=85.1 TD=5.7 | IAE=21.64 Pwr=88.2 | 状态=过载 | ✓ frame_id=78
+```
 
 ---
 
