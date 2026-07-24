@@ -215,14 +215,16 @@ def issue_command():
         delta_td=data.get('delta_td', 0.0),
         delta_k_ff=data.get('delta_k_ff', 0.0),
         confidence=data.get('confidence', 0.5),
-        valid_time=data.get('valid_time', 60)
+        valid_time=data.get('valid_time', 60),
+        fan_power=data.get('fan_power')  # None 表示沿用当前
     )
     db.session.add(cmd)
     db.session.commit()
     return jsonify({
         'status': 'ok',
         'action_batch_id': batch_id,
-        'confidence': cmd.confidence
+        'confidence': cmd.confidence,
+        'fan_power': cmd.fan_power
     })
 
 
@@ -248,6 +250,7 @@ def pending_command():
         'delta_k_ff': cmd.delta_k_ff,
         'confidence': cmd.confidence,
         'valid_time': cmd.valid_time,
+        'fan_power': cmd.fan_power,
         'issued_at': cmd.issued_at.isoformat() if cmd.issued_at else None
     })
 
@@ -280,6 +283,7 @@ def get_commands():
         'delta_k_ff': c.delta_k_ff,
         'confidence': c.confidence,
         'valid_time': c.valid_time,
+        'fan_power': c.fan_power,
         'issued_at': c.issued_at.isoformat() if c.issued_at else None,
         'applied': c.applied
     } for c in cmds])

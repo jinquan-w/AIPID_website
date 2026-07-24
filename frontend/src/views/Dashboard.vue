@@ -151,6 +151,11 @@
             <label>有效期（秒）</label>
             <input v-model.number="cmdForm.valid_time" type="number" min="10" placeholder="例如: 60" />
           </div>
+          <div class="form-divider"></div>
+          <div class="form-group">
+            <label>风扇功率（0~100%，留空=沿用当前）</label>
+            <input v-model.number="cmdForm.fan_power" type="number" step="1" min="0" max="100" placeholder="留空表示沿用当前功率" />
+          </div>
         </div>
         <div class="modal-footer">
           <span class="modal-msg" :class="modalMsgType">{{ modalMsg }}</span>
@@ -192,7 +197,8 @@ export default {
         delta_td: 0,
         delta_k_ff: 0,
         confidence: 0.85,
-        valid_time: 60
+        valid_time: 60,
+        fan_power: null
       }
     }
   },
@@ -278,8 +284,13 @@ export default {
       this.issuing = true
       this.modalMsg = ''
       this.modalMsgType = ''
+      // 处理 fan_power：NaN 转为 null（沿用当前）
+      const payload = { ...this.cmdForm }
+      if (payload.fan_power === null || payload.fan_power === '' || isNaN(payload.fan_power)) {
+        delete payload.fan_power
+      }
       try {
-        const res = await axios.post('/api/issue_command', this.cmdForm, {
+        const res = await axios.post('/api/issue_command', payload, {
           withCredentials: true
         })
         if (res.data.status === 'ok') {
@@ -292,7 +303,8 @@ export default {
             delta_td: 0,
             delta_k_ff: 0,
             confidence: 0.85,
-            valid_time: 60
+            valid_time: 60,
+            fan_power: null
           }
           // 刷新数据
           await this.loadData()
@@ -619,6 +631,12 @@ tbody tr:hover {
 .form-group input:focus {
   border-color: #667eea;
   box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+}
+
+.form-divider {
+  height: 1px;
+  background: #f0f0f0;
+  margin: 16px 0;
 }
 
 .modal-footer {

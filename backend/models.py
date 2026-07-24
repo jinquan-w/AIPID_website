@@ -66,5 +66,6 @@ class DownlinkCommand(db.Model):
 
     confidence = db.Column(db.Float)       # 置信度
     valid_time = db.Column(db.Integer)     # 有效期（秒）
+    fan_power = db.Column(db.Float, nullable=True)  # 风扇功率设定（None=沿用当前）
     issued_at = db.Column(db.DateTime, default=datetime.utcnow)
     applied = db.Column(db.Boolean, default=False)  # 是否已被边缘侧应用

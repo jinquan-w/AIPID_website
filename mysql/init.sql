@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS downlink_commands (
 
     confidence FLOAT DEFAULT 0.5,                   -- 置信度
     valid_time INT UNSIGNED DEFAULT 60,             -- 有效期（秒）
+    fan_power FLOAT DEFAULT NULL,                   -- 风扇功率设定（NULL=沿用当前）
     issued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 下发时间
     applied BOOLEAN DEFAULT FALSE,                  -- 是否已被边缘侧应用
 
