@@ -29,9 +29,11 @@ class Config:
     }
 
     # ---------- Session 安全 ----------
-    SESSION_COOKIE_SECURE = True       # 生产环境 HTTPS 下启用
+    # 开发环境 HTTP 下设为 False，生产环境 HTTPS 下改为 True
+    SESSION_COOKIE_SECURE = False
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
+    SESSION_COOKIE_PATH = '/'
     PERMANENT_SESSION_LIFETIME = 28800  # 8 小时
 
     # ---------- 上传限制 ----------

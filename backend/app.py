@@ -13,7 +13,14 @@ from pathlib import Path
 
 app = Flask(__name__)
 app.config.from_object(Config)
-CORS(app, supports_credentials=True)
+
+# Session 配置
+app.config.update(
+    SESSION_COOKIE_DOMAIN=False,  # 允许所有域名
+    SESSION_COOKIE_PATH='/',
+)
+
+CORS(app, supports_credentials=True, origins=['http://localhost', 'http://172.160.100.141'])
 db.init_app(app)
 BASE_DIR = Path(__file__).parent.parent
 
