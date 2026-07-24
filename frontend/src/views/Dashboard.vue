@@ -58,13 +58,24 @@
           </div>
         </div>
 
-        <!-- 下发指令卡片 -->
+        <!-- 下发 PID 指令卡片 -->
         <div class="card cmd-card">
           <h3>下发 PID 指令</h3>
           <div class="card-content cmd-content">
             <p class="cmd-desc">手动填写 PID 参数调整量，下发到边缘侧设备</p>
             <button class="btn-issue" @click="showCmdModal = true">
-              + 下发指令
+              + 下发 PID 指令
+            </button>
+          </div>
+        </div>
+
+        <!-- 下发风扇功率卡片 -->
+        <div class="card fan-card">
+          <h3>下发风扇功率</h3>
+          <div class="card-content cmd-content">
+            <p class="cmd-desc">手动设定内外空气交换风扇功率（0~100%），立即下发到边缘侧设备</p>
+            <button class="btn-issue btn-fan" @click="showFanModal = true">
+              + 设定风扇功率
             </button>
           </div>
         </div>
@@ -119,7 +130,38 @@
       </section>
     </main>
 
-    <!-- 下发指令弹窗 -->
+    <!-- 下发风扇功率弹窗 -->
+    <div class="modal-overlay" v-if="showFanModal" @click.self="showFanModal = false">
+      <div class="modal modal-sm">
+        <div class="modal-header">
+          <h3>设定风扇功率</h3>
+          <button class="modal-close" @click="showFanModal = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>风扇功率（0~100%）</label>
+            <input v-model.number="fanForm.power" type="number" step="1" min="0" max="100" placeholder="例如: 60" />
+          </div>
+          <div class="form-group">
+            <label>有效期（秒）</label>
+            <input v-model.number="fanForm.valid_time" type="number" min="10" placeholder="例如: 60" />
+          </div>
+          <div class="form-group">
+            <label>置信度 (0~1)</label>
+            <input v-model.number="fanForm.confidence" type="number" step="0.05" min="0" max="1" placeholder="例如: 0.95" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <span class="modal-msg" :class="fanMsgType">{{ fanMsg }}</span>
+          <button class="btn-cancel" @click="showFanModal = false">取消</button>
+          <button class="btn-confirm btn-fan-confirm" @click="handleIssueFanPower" :disabled="issuingFan">
+            {{ issuingFan ? '下发中...' : '确认下发' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 下发 PID 指令弹窗 -->
     <div class="modal-overlay" v-if="showCmdModal" @click.self="showCmdModal = false">
       <div class="modal">
         <div class="modal-header">
@@ -186,7 +228,7 @@ export default {
       deviceStatus: 'offline',
       deviceLabel: '未连接',
       lastSeenAgo: null,
-      // 下发指令弹窗
+      // 下发 PID 指令弹窗
       showCmdModal: false,
       issuing: false,
       modalMsg: '',
@@ -199,6 +241,16 @@ export default {
         confidence: 0.85,
         valid_time: 60,
         fan_power: null
+      },
+      // 下发风扇功率弹窗
+      showFanModal: false,
+      issuingFan: false,
+      fanMsg: '',
+      fanMsgType: '',
+      fanForm: {
+        power: 60,
+        valid_time: 60,
+        confidence: 0.95
       }
     }
   },
@@ -318,6 +370,53 @@ export default {
         this.modalMsgType = 'error'
       } finally {
         this.issuing = false
+      }
+    },
+
+    async handleIssueFanPower() {
+      this.issuingFan = true
+      this.fanMsg = ''
+      this.fanMsgType = ''
+      const power = this.fanForm.power
+      if (power === null || power === '' || isNaN(power)) {
+        this.fanMsg = '❌ 请填写有效的风扇功率值'
+        this.fanMsgType = 'error'
+        this.issuingFan = false
+        return
+      }
+      if (power < 0 || power > 100) {
+        this.fanMsg = '❌ 风扇功率必须在 0~100 之间'
+        this.fanMsgType = 'error'
+        this.issuingFan = false
+        return
+      }
+      try {
+        const res = await axios.post('/api/issue_command', {
+          delta_kp: 0,
+          delta_ti: 0,
+          delta_td: 0,
+          delta_k_ff: 0,
+          confidence: this.fanForm.confidence,
+          valid_time: this.fanForm.valid_time,
+          fan_power: power
+        }, {
+          withCredentials: true
+        })
+        if (res.data.status === 'ok') {
+          this.fanMsg = `✅ 风扇功率已设定为 ${power}%（批次 #${res.data.action_batch_id}）`
+          this.fanMsgType = 'success'
+          // 刷新数据
+          await this.loadData()
+        } else {
+          this.fanMsg = '❌ 下发失败：' + (res.data.message || '未知错误')
+          this.fanMsgType = 'error'
+        }
+      } catch (err) {
+        const msg = err.response?.data?.message || err.message || '网络错误'
+        this.fanMsg = '❌ 下发失败：' + msg
+        this.fanMsgType = 'error'
+      } finally {
+        this.issuingFan = false
       }
     }
   }
@@ -544,6 +643,33 @@ tbody tr:hover {
 
 .btn-issue:hover {
   background: #5a6fd6;
+}
+
+/* 下发风扇功率卡片 */
+.fan-card {
+  border: 1px dashed #52c41a;
+  background: #f6ffed;
+}
+
+.btn-fan {
+  background: #52c41a;
+}
+
+.btn-fan:hover {
+  background: #45a818;
+}
+
+.btn-fan-confirm {
+  background: #52c41a;
+}
+
+.btn-fan-confirm:hover {
+  background: #45a818;
+}
+
+.btn-fan-confirm:disabled {
+  background: #95d475;
+  cursor: not-allowed;
 }
 
 /* 弹窗遮罩 */
