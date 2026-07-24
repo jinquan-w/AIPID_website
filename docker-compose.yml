@@ -15,8 +15,10 @@ services:
       MYSQL_DATABASE: pid_control
       MYSQL_USER: aipid
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-aipid123}
-    ports:
-      - "127.0.0.1:3306:3306"  # 仅本地访问
+    # 端口不暴露到宿主机，避免与本地 MariaDB/MySQL 冲突
+    # 后端通过 Docker 内部网络直接访问 mysql:3306
+    # ports:
+    #   - "127.0.0.1:3306:3306"  # 仅本地访问
     volumes:
       - mysql_data:/var/lib/mysql
       - ./mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
