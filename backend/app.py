@@ -229,12 +229,14 @@ def issue_command():
 def pending_command():
     """边缘侧查询当前有效（未应用且在有效期内）的指令"""
     now = datetime.utcnow()
+    # 先查出所有未应用的指令，再在 Python 中过滤有效期
     cmd = DownlinkCommand.query.filter(
-        DownlinkCommand.applied == False,
-        DownlinkCommand.issued_at + timedelta(
-            seconds=DownlinkCommand.valid_time
-        ) > now
+        DownlinkCommand.applied == False
     ).order_by(DownlinkCommand.issued_at.desc()).first()
+    if cmd:
+        expire_at = cmd.issued_at + timedelta(seconds=cmd.valid_time)
+        if expire_at <= now:
+            cmd = None
     if not cmd:
         return jsonify({})
     return jsonify({
