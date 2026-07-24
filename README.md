@@ -9,9 +9,9 @@
 
 AIPID 温控系统是一个面向工业 PID 温控场景的云端数据管理平台，实现**边缘侧（PLC/树莓派）与云端之间的双向数据交互**：
 
-- **上行**：边缘侧设备实时上传 PID 运行特征帧（KP、TI、TD、IAE 等指标）到云端存储
-- **下行**：云端可下发 PID 参数调整指令给边缘侧设备执行
-- **监控**：Web 前端提供登录认证、数据可视化看板、指令管理等功能
+- **上行 ↑**：边缘侧设备实时上传 PID 运行特征帧（KP、TI、TD、IAE 等指标）到云端存储
+- **下行 ↓**：云端可下发 PID 参数调整指令给边缘侧设备执行
+- **监控 📊**：Web 前端提供登录认证、注册、数据可视化看板、指令管理等功能
 
 ### 系统架构
 
@@ -24,7 +24,7 @@ AIPID 温控系统是一个面向工业 PID 温控场景的云端数据管理平
 ┌──────────────────────▼──────────────────────────────────┐
 │                    Nginx (HTTPS)                         │
 │  ┌──────────────────────────────────────────────────┐   │
-│  │  • SSL 终止（Let's Encrypt / 阿里云证书）         │   │
+│  │  • SSL 终止（Let's Encrypt / 云厂商证书）         │   │
 │  │  • 静态文件服务（Vue 构建产物）                    │   │
 │  │  • API 反向代理 → Flask 后端                      │   │
 │  │  • 安全头 / 限流 / 缓存                           │   │
@@ -33,10 +33,10 @@ AIPID 温控系统是一个面向工业 PID 温控场景的云端数据管理平
            │                              │
 ┌──────────▼──────────┐    ┌──────────────▼──────────────┐
 │   Vue 3 前端         │    │   Flask API (Gunicorn)      │
-│   (静态文件)          │    │   • 用户认证 (bcrypt)       │
-│   • 登录页面          │    │   • 特征帧上传/查询         │
+│   (静态文件)          │    │   • 用户认证/注册 (bcrypt)  │
+│   • 登录/注册页面     │    │   • 特征帧上传/查询         │
 │   • 数据仪表板        │    │   • 指令下发/确认           │
-│   • 实时刷新          │    │   • 健康检查                │
+│   • 实时刷新(10s)    │    │   • 健康检查                │
 └─────────────────────┘    └──────────────┬──────────────┘
                                           │
                                ┌──────────▼──────────────┐
@@ -52,13 +52,14 @@ AIPID 温控系统是一个面向工业 PID 温控场景的云端数据管理平
 
 | 层级 | 技术 | 说明 |
 |------|------|------|
-| **前端** | Vue 3 + Vue Router + Axios | 单页应用，支持 History 路由 |
+| **前端** | Vue 3 + Vue Router + Axios | 单页应用，支持 History 路由模式 |
 | **构建** | Vite | 快速开发服务器 + 生产构建 |
-| **后端** | Flask + SQLAlchemy | RESTful API |
-| **WSGI** | Gunicorn | 生产级 Python WSGI 服务器 |
-| **数据库** | MySQL 8.0 | 关系型数据库 |
+| **后端** | Flask + SQLAlchemy | RESTful API，ORM 数据库操作 |
+| **WSGI** | Gunicorn | 生产级 Python WSGI 服务器，多进程并发 |
+| **数据库** | MySQL 8.0 | 关系型数据库，支持 utf8mb4 |
 | **反向代理** | Nginx | SSL 终止、静态文件服务、API 代理 |
 | **部署** | Docker Compose / Shell 脚本 | 容器化或裸机部署 |
+| **密码安全** | bcrypt | 密码哈希存储，不保存明文 |
 
 ---
 
@@ -67,8 +68,8 @@ AIPID 温控系统是一个面向工业 PID 温控场景的云端数据管理平
 ```
 AIPID_website/
 ├── backend/                      # Flask 后端
-│   ├── app.py                    # 主应用 & API 路由
-│   ├── config.py                 # 配置（数据库、Session 等）
+│   ├── app.py                    # 主应用 & 全部 API 路由
+│   ├── config.py                 # 配置（数据库、Session、安全等）
 │   ├── models.py                 # 数据模型（User, FeatureFrame, DownlinkCommand）
 │   ├── wsgi.py                   # WSGI 入口
 │   ├── gunicorn.conf.py          # Gunicorn 生产配置
@@ -78,25 +79,26 @@ AIPID_website/
 ├── frontend/                     # Vue 3 前端
 │   ├── index.html                # HTML 入口
 │   ├── package.json              # Node 依赖
-│   ├── vite.config.js            # Vite 配置
+│   ├── vite.config.js            # Vite 配置（含开发代理）
 │   └── src/
 │       ├── main.js               # 应用入口
 │       ├── App.vue               # 根组件
-│       ├── router/index.js       # 路由配置
+│       ├── router/index.js       # 路由配置（/login, /register, /dashboard）
 │       └── views/
 │           ├── Login.vue         # 登录页面
-│           └── Dashboard.vue     # 数据仪表板
+│           ├── Register.vue      # 注册页面
+│           └── Dashboard.vue     # 数据仪表板（10s 自动刷新）
 │
 ├── mysql/
 │   └── init.sql                  # 数据库初始化脚本（4 张表）
 │
 ├── nginx/
-│   └── nginx.conf                # Nginx 生产配置
+│   └── nginx.conf                # Nginx 配置（含 HTTPS 注释模板）
 │
 ├── deploy/
 │   └── deploy.sh                 # 一键部署脚本（Ubuntu/Debian）
 │
-├── docker-compose.yml            # Docker Compose 编排
+├── docker-compose.yml            # Docker Compose 编排（MySQL + Backend + Nginx）
 ├── .env.example                  # 环境变量模板
 ├── .gitignore
 └── README.md
@@ -113,7 +115,7 @@ AIPID_website/
 git clone https://github.com/your-org/AIPID_website.git
 cd AIPID_website
 
-# 2. 配置环境变量
+# 2. 配置环境变量（可选，有默认值）
 cp .env.example .env
 # 编辑 .env 修改密码等配置
 
@@ -127,7 +129,7 @@ cd ..
 docker compose up -d
 
 # 5. 访问
-# https://localhost
+# http://localhost
 # 默认管理员: admin / 123456
 ```
 
@@ -169,13 +171,14 @@ npm run dev
 
 ### 用户认证
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/login` | 用户登录 |
-| POST | `/api/logout` | 用户登出 |
-| GET | `/api/me` | 获取当前用户信息 |
+| 方法 | 路径 | 说明 | 请求体 |
+|------|------|------|--------|
+| POST | `/api/login` | 用户登录 | `{"username": "...", "password": "..."}` |
+| POST | `/api/register` | 用户注册 | `{"username": "...", "password": "..."}` |
+| POST | `/api/logout` | 用户登出 | - |
+| GET | `/api/me` | 获取当前登录用户信息 | - |
 
-### 特征帧（上行）
+### 特征帧（上行 - 边缘侧 → 云端）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -183,7 +186,7 @@ npm run dev
 | GET | `/api/frames?limit=100` | 获取最近 N 条特征帧 |
 | GET | `/api/frames/latest` | 获取最新一条特征帧 |
 
-### 指令（下行）
+### 指令（下行 - 云端 → 边缘侧）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -218,22 +221,23 @@ npm run dev
 
 ## 🗄️ 数据库表结构
 
-| 表名 | 说明 |
-|------|------|
-| `users` | 用户表（bcrypt 密码哈希） |
-| `feature_frames` | 特征帧表（上行数据） |
-| `downlink_commands` | 下行指令表 |
-| `experience_pool` | 极端工况经验池 |
+| 表名 | 说明 | 关键字段 |
+|------|------|----------|
+| `users` | 用户表 | username(唯一), password_hash(bcrypt), role(admin/viewer) |
+| `feature_frames` | 特征帧表（上行数据） | timestamp, kp, ti, td, iae_60s, status_flag 等 |
+| `downlink_commands` | 下行指令表 | action_batch_id(唯一), delta_kp/ti/td, confidence, applied |
+| `experience_pool` | 极端工况经验池 | feature_frame_id(外键), reason |
 
 ---
 
 ## 🔒 安全配置
 
-1. **HTTPS**：Nginx 配置 SSL 证书（Let's Encrypt 或阿里云免费证书）
+1. **HTTPS**：Nginx 配置 SSL 证书（Let's Encrypt 或云厂商免费证书）
 2. **密码安全**：bcrypt 哈希存储，不保存明文
-3. **Session 安全**：Secure + HttpOnly + SameSite=Lax
+3. **Session 安全**：HttpOnly + SameSite=Lax，生产环境启用 Secure
 4. **数据库隔离**：MySQL 仅监听 127.0.0.1，不对外暴露
 5. **环境变量**：敏感配置通过环境变量注入，不写入代码
+6. **CORS**：明确指定允许的 origins，不滥用通配符
 
 ---
 
@@ -255,6 +259,25 @@ MySQL (内网)
 - **Gunicorn** 多进程运行 Flask，提高并发处理能力
 - **MySQL** 仅内网访问，不对外暴露端口
 - **环境变量** 注入数据库连接串和密钥，不硬编码在配置文件中
+
+---
+
+## 🐳 Docker Compose 服务说明
+
+| 服务 | 镜像 | 端口 | 说明 |
+|------|------|------|------|
+| `mysql` | mysql:8.0 | 127.0.0.1:3306 | 数据库，带健康检查 |
+| `backend` | 自构建 | 127.0.0.1:5000 | Flask + Gunicorn |
+| `nginx` | nginx:1.25-alpine | 80 | 反向代理 + 静态文件 |
+
+```bash
+# 常用命令
+docker compose up -d              # 启动所有服务
+docker compose down               # 停止所有服务
+docker compose logs -f backend    # 查看后端日志
+docker compose build backend      # 重建后端镜像
+docker compose up -d --force-recreate backend  # 重启后端
+```
 
 ---
 
