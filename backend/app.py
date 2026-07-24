@@ -1,6 +1,6 @@
 """
 AIPID 温控系统 - Flask 后端主应用
-生产环境使用 Gunicorn 启动: gunicorn -w 4 -b 0.0.0.0:5000 app:app
+生产环境使用 Gunicorn 启动: gunicorn -c gunicorn.conf.py wsgi:app
 """
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
@@ -16,6 +16,29 @@ app.config.from_object(Config)
 CORS(app, supports_credentials=True)
 db.init_app(app)
 BASE_DIR = Path(__file__).parent.parent
+
+
+# ============================================================
+#  应用初始化（首次请求时创建默认管理员）
+# ============================================================
+
+@app.before_request
+def _init_app_once():
+    """首次请求前初始化数据库和默认用户"""
+    if not hasattr(app, '_initialized'):
+        with app.app_context():
+            db.create_all()
+            if not User.query.filter_by(username='admin').first():
+                hashed = bcrypt.hashpw('123456'.encode('utf-8'), bcrypt.gensalt())
+                admin = User(
+                    username='admin',
+                    password_hash=hashed.decode('utf-8'),
+                    role='admin'
+                )
+                db.session.add(admin)
+                db.session.commit()
+                print('[INFO] 默认管理员已创建: admin / 123456')
+        app._initialized = True
 
 
 # ============================================================
@@ -38,6 +61,36 @@ def login():
         session.permanent = True
         return jsonify({'status': 'success', 'role': user.role})
     return jsonify({'status': 'fail', 'message': '用户名或密码错误'}), 401
+
+
+@app.route('/api/register', methods=['POST'])
+def register():
+    """用户注册"""
+    data = request.json
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'status': 'fail', 'message': '缺少用户名或密码'}), 400
+
+    username = data['username'].strip()
+    password = data['password']
+
+    if len(username) < 2 or len(username) > 50:
+        return jsonify({'status': 'fail', 'message': '用户名长度应为 2-50 个字符'}), 400
+    if len(password) < 6:
+        return jsonify({'status': 'fail', 'message': '密码长度不能少于 6 位'}), 400
+
+    if User.query.filter_by(username=username).first():
+        return jsonify({'status': 'fail', 'message': '用户名已存在'}), 409
+
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    user = User(
+        username=username,
+        password_hash=hashed.decode('utf-8'),
+        role='viewer'
+    )
+    db.session.add(user)
+    db.session.commit()
+
+    return jsonify({'status': 'success', 'message': '注册成功，请登录'})
 
 
 @app.route('/api/logout', methods=['POST'])
