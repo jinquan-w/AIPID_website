@@ -51,8 +51,21 @@
           <div class="card-content">
             <p>后端: <span class="status-ok">● 运行中</span></p>
             <p>数据库: <span class="status-ok">● 已连接</span></p>
+            <p>恒温箱: <span :class="'device-status device-' + (deviceStatus || 'offline')">● {{ deviceLabel || '未连接' }}</span></p>
+            <p v-if="lastSeenAgo !== null">最后通信: {{ lastSeenAgo }} 秒前</p>
             <p>特征帧总数: {{ frameCount }}</p>
             <p>已下发指令: {{ commandCount }}</p>
+          </div>
+        </div>
+
+        <!-- 下发指令卡片 -->
+        <div class="card cmd-card">
+          <h3>下发 PID 指令</h3>
+          <div class="card-content cmd-content">
+            <p class="cmd-desc">手动填写 PID 参数调整量，下发到边缘侧设备</p>
+            <button class="btn-issue" @click="showCmdModal = true">
+              + 下发指令
+            </button>
           </div>
         </div>
       </section>
@@ -105,6 +118,49 @@
         </div>
       </section>
     </main>
+
+    <!-- 下发指令弹窗 -->
+    <div class="modal-overlay" v-if="showCmdModal" @click.self="showCmdModal = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>下发 PID 参数调整指令</h3>
+          <button class="modal-close" @click="showCmdModal = false">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label>ΔKP（比例系数调整量）</label>
+            <input v-model.number="cmdForm.delta_kp" type="number" step="0.001" placeholder="例如: 0.5" />
+          </div>
+          <div class="form-group">
+            <label>ΔTI（积分时间调整量）</label>
+            <input v-model.number="cmdForm.delta_ti" type="number" step="0.1" placeholder="例如: -5.0" />
+          </div>
+          <div class="form-group">
+            <label>ΔTD（微分时间调整量）</label>
+            <input v-model.number="cmdForm.delta_td" type="number" step="0.001" placeholder="例如: 2.0" />
+          </div>
+          <div class="form-group">
+            <label>ΔK_FF（前馈系数调整量）</label>
+            <input v-model.number="cmdForm.delta_k_ff" type="number" step="0.001" placeholder="例如: 0.0" />
+          </div>
+          <div class="form-group">
+            <label>置信度 (0~1)</label>
+            <input v-model.number="cmdForm.confidence" type="number" step="0.05" min="0" max="1" placeholder="例如: 0.85" />
+          </div>
+          <div class="form-group">
+            <label>有效期（秒）</label>
+            <input v-model.number="cmdForm.valid_time" type="number" min="10" placeholder="例如: 60" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <span class="modal-msg" :class="modalMsgType">{{ modalMsg }}</span>
+          <button class="btn-cancel" @click="showCmdModal = false">取消</button>
+          <button class="btn-confirm" @click="handleIssueCommand" :disabled="issuing">
+            {{ issuing ? '下发中...' : '确认下发' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -120,7 +176,24 @@ export default {
       pendingCmd: {},
       frameCount: 0,
       commandCount: 0,
-      refreshTimer: null
+      refreshTimer: null,
+      // 设备状态
+      deviceStatus: 'offline',
+      deviceLabel: '未连接',
+      lastSeenAgo: null,
+      // 下发指令弹窗
+      showCmdModal: false,
+      issuing: false,
+      modalMsg: '',
+      modalMsgType: '',
+      cmdForm: {
+        delta_kp: 0,
+        delta_ti: 0,
+        delta_td: 0,
+        delta_k_ff: 0,
+        confidence: 0.85,
+        valid_time: 60
+      }
     }
   },
   async mounted() {
@@ -152,10 +225,11 @@ export default {
 
     async loadData() {
       try {
-        const [framesRes, latestRes, pendingRes] = await Promise.all([
+        const [framesRes, latestRes, pendingRes, deviceRes] = await Promise.all([
           axios.get('/api/frames?limit=50'),
           axios.get('/api/frames/latest'),
-          axios.get('/api/pending_command')
+          axios.get('/api/pending_command'),
+          axios.get('/api/device/status')
         ])
 
         this.frames = framesRes.data || []
@@ -163,6 +237,13 @@ export default {
         this.pendingCmd = pendingRes.data || {}
         this.frameCount = this.frames.length
         this.commandCount = this.pendingCmd.action_batch_id ? 1 : 0
+
+        // 设备状态
+        if (deviceRes.data) {
+          this.deviceStatus = deviceRes.data.status || 'offline'
+          this.deviceLabel = deviceRes.data.label || '未连接'
+          this.lastSeenAgo = deviceRes.data.last_seen_ago ?? null
+        }
       } catch (err) {
         console.error('[Dashboard] 数据加载失败:', err)
       }
@@ -191,6 +272,41 @@ export default {
         3: '异常'
       }
       return map[flag] || `未知(${flag})`
+    },
+
+    async handleIssueCommand() {
+      this.issuing = true
+      this.modalMsg = ''
+      this.modalMsgType = ''
+      try {
+        const res = await axios.post('/api/issue_command', this.cmdForm, {
+          withCredentials: true
+        })
+        if (res.data.status === 'ok') {
+          this.modalMsg = `✅ 指令已下发（批次 #${res.data.action_batch_id}，置信度 ${(res.data.confidence * 100).toFixed(0)}%）`
+          this.modalMsgType = 'success'
+          // 重置表单
+          this.cmdForm = {
+            delta_kp: 0,
+            delta_ti: 0,
+            delta_td: 0,
+            delta_k_ff: 0,
+            confidence: 0.85,
+            valid_time: 60
+          }
+          // 刷新数据
+          await this.loadData()
+        } else {
+          this.modalMsg = '❌ 下发失败：' + (res.data.message || '未知错误')
+          this.modalMsgType = 'error'
+        }
+      } catch (err) {
+        const msg = err.response?.data?.message || err.message || '网络错误'
+        this.modalMsg = '❌ 下发失败：' + msg
+        this.modalMsgType = 'error'
+      } finally {
+        this.issuing = false
+      }
     }
   }
 }
@@ -295,6 +411,23 @@ export default {
   color: #52c41a;
 }
 
+/* 设备状态 */
+.device-status {
+  font-weight: 600;
+}
+
+.device-running {
+  color: #52c41a;
+}
+
+.device-stopped {
+  color: #fa8c16;
+}
+
+.device-offline {
+  color: #999;
+}
+
 /* 数据表格 */
 .data-section {
   background: #fff;
@@ -371,5 +504,179 @@ tbody tr:hover {
   padding: 60px 20px;
   color: #999;
   font-size: 14px;
+}
+
+/* 下发指令卡片 */
+.cmd-card {
+  border: 1px dashed #667eea;
+  background: #f8f9ff;
+}
+
+.cmd-desc {
+  font-size: 13px !important;
+  color: #888 !important;
+  margin-bottom: 12px !important;
+}
+
+.btn-issue {
+  width: 100%;
+  padding: 10px 0;
+  background: #667eea;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.btn-issue:hover {
+  background: #5a6fd6;
+}
+
+/* 弹窗遮罩 */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 10px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.modal-header h3 {
+  font-size: 16px;
+  color: #333;
+  margin: 0;
+  border: none;
+  padding: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #999;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #333;
+}
+
+.modal-body {
+  padding: 20px 24px;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  outline: none;
+  transition: border-color 0.3s;
+  box-sizing: border-box;
+}
+
+.form-group input:focus {
+  border-color: #667eea;
+  box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.15);
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.modal-msg {
+  flex: 1;
+  font-size: 13px;
+  text-align: left;
+}
+
+.modal-msg.success {
+  color: #52c41a;
+}
+
+.modal-msg.error {
+  color: #ff4d4f;
+}
+
+.btn-cancel {
+  padding: 8px 20px;
+  background: #fff;
+  color: #666;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-cancel:hover {
+  color: #333;
+  border-color: #bbb;
+}
+
+.btn-confirm {
+  padding: 8px 20px;
+  background: #667eea;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+
+.btn-confirm:hover {
+  background: #5a6fd6;
+}
+
+.btn-confirm:disabled {
+  background: #a0aeea;
+  cursor: not-allowed;
 }
 </style>

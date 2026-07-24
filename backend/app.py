@@ -8,6 +8,7 @@ from config import Config
 from models import db, User, FeatureFrame, DownlinkCommand
 import bcrypt
 from datetime import datetime, timedelta
+import time
 import os
 from pathlib import Path
 
@@ -282,6 +283,48 @@ def get_commands():
         'issued_at': c.issued_at.isoformat() if c.issued_at else None,
         'applied': c.applied
     } for c in cmds])
+
+
+# ============================================================
+#  设备状态
+# ============================================================
+
+@app.route('/api/device/status', methods=['GET'])
+def device_status():
+    """
+    获取恒温箱硬件状态
+    基于 RS485 接口数据判断：
+      - running:  最近 30 秒内有特征帧上传
+      - stopped:  有历史数据，但超过 30 秒未更新
+      - offline:  从未收到过特征帧数据
+    """
+    latest = FeatureFrame.query.order_by(
+        FeatureFrame.timestamp.desc()
+    ).first()
+
+    if not latest:
+        return jsonify({
+            'status': 'offline',
+            'label': '未连接',
+            'last_seen': None
+        })
+
+    now_ms = int(time.time() * 1000)
+    elapsed = (now_ms - latest.timestamp) / 1000  # 秒
+
+    if elapsed <= 30:
+        device_status = 'running'
+        label = '运行中'
+    else:
+        device_status = 'stopped'
+        label = '已停止'
+
+    return jsonify({
+        'status': device_status,
+        'label': label,
+        'last_seen': latest.timestamp,
+        'last_seen_ago': round(elapsed, 1)
+    })
 
 
 # ============================================================
