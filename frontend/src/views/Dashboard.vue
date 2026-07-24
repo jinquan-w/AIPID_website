@@ -53,7 +53,8 @@
             <p>数据库: <span class="status-ok">● 已连接</span></p>
             <p>恒温箱: <span :class="'device-status device-' + (deviceStatus || 'offline')">● {{ deviceLabel || '未连接' }}</span></p>
             <p v-if="lastSeenAgo !== null">最后通信: {{ lastSeenAgo }} 秒前</p>
-            <p>特征帧总数: {{ frameCount }}</p>
+            <p>特征帧总数: {{ totalFrames }}</p>
+            <p>运行批次: {{ totalBatches }}</p>
             <p>已下发指令: {{ commandCount }}</p>
           </div>
         </div>
@@ -81,51 +82,129 @@
         </div>
       </section>
 
-      <!-- 特征帧列表 -->
+      <!-- 特征帧批次列表 -->
       <section class="data-section">
         <div class="section-header">
-          <h2>特征帧记录</h2>
-          <span class="badge">最近 {{ frames.length }} 条</span>
+          <h2>运行批次</h2>
+          <span class="badge">共 {{ totalBatches }} 批次 / {{ totalFrames }} 帧</span>
         </div>
 
-        <div class="table-wrapper">
-          <table v-if="frames.length > 0">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>KP</th>
-                <th>TI</th>
-                <th>TD</th>
-                <th>IAE(60s)</th>
-                <th>功率方差</th>
-                <th>过零计数</th>
-                <th>平均扰动</th>
-                <th>当前功率</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="frame in frames" :key="frame.id">
-                <td>{{ formatTime(frame.timestamp) }}</td>
-                <td>{{ frame.kp?.toFixed(3) }}</td>
-                <td>{{ frame.ti?.toFixed(1) }}</td>
-                <td>{{ frame.td?.toFixed(3) }}</td>
-                <td>{{ frame.iae_60s?.toFixed(2) }}</td>
-                <td>{{ frame.var_power?.toFixed(2) }}</td>
-                <td>{{ frame.zero_cross_count }}</td>
-                <td>{{ frame.avg_disturbance?.toFixed(2) }}</td>
-                <td>{{ frame.current_power?.toFixed(1) }}</td>
-                <td>
-                  <span :class="'status-tag status-' + (frame.status_flag || 0)">
-                    {{ statusText(frame.status_flag) }}
-                  </span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-else class="empty-state">
-            暂无特征帧数据，请等待边缘侧设备上传
+        <div v-if="batches.length > 0" class="batch-list">
+          <div
+            v-for="batch in batches"
+            :key="batch.batch_index"
+            class="batch-card"
+            :class="{ 'batch-active': batch.batch_index === 0 }"
+          >
+            <!-- 批次摘要头 -->
+            <div class="batch-header" @click="toggleBatch(batch.batch_index)">
+              <div class="batch-info">
+                <span class="batch-label" :class="'batch-label-' + batch.max_status">
+                  {{ batch.batch_index === 0 ? '🟢 当前运行' : '⏹ 历史批次' }}
+                </span>
+                <span class="batch-time">
+                  {{ formatTime(batch.start_time) }}
+                  <template v-if="batch.frame_count > 1">
+                    ~ {{ formatTime(batch.end_time) }}
+                  </template>
+                </span>
+              </div>
+              <div class="batch-stats">
+                <span class="batch-stat">{{ batch.frame_count }} 帧</span>
+                <span class="batch-stat">{{ batch.duration_sec }}s</span>
+                <span class="batch-stat">IAE: {{ batch.avg_iae_60s.toFixed(2) }}</span>
+              </div>
+              <span class="batch-toggle">{{ expandedBatches[batch.batch_index] ? '▲' : '▼' }}</span>
+            </div>
+
+            <!-- 批次详情（展开时显示） -->
+            <div v-if="expandedBatches[batch.batch_index]" class="batch-detail">
+              <!-- 最新批次直接显示帧数据 -->
+              <div v-if="batch.batch_index === 0 && batch.frames && batch.frames.length > 0">
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>KP</th>
+                        <th>TI</th>
+                        <th>TD</th>
+                        <th>IAE(60s)</th>
+                        <th>功率方差</th>
+                        <th>过零计数</th>
+                        <th>平均扰动</th>
+                        <th>当前功率</th>
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="frame in batch.frames" :key="frame.id">
+                        <td>{{ formatTime(frame.timestamp) }}</td>
+                        <td>{{ frame.kp?.toFixed(3) }}</td>
+                        <td>{{ frame.ti?.toFixed(1) }}</td>
+                        <td>{{ frame.td?.toFixed(3) }}</td>
+                        <td>{{ frame.iae_60s?.toFixed(2) }}</td>
+                        <td>{{ frame.var_power?.toFixed(2) }}</td>
+                        <td>{{ frame.zero_cross_count }}</td>
+                        <td>{{ frame.avg_disturbance?.toFixed(2) }}</td>
+                        <td>{{ frame.current_power?.toFixed(1) }}</td>
+                        <td>
+                          <span :class="'status-tag status-' + (frame.status_flag || 0)">
+                            {{ statusText(frame.status_flag) }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <!-- 历史批次：点击加载帧数据 -->
+              <div v-else-if="batch.batch_index > 0">
+                <div v-if="batch.loading" class="batch-loading">加载中...</div>
+                <div v-else-if="batch.loadedFrames && batch.loadedFrames.length > 0" class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>时间</th>
+                        <th>KP</th>
+                        <th>TI</th>
+                        <th>TD</th>
+                        <th>IAE(60s)</th>
+                        <th>功率方差</th>
+                        <th>过零计数</th>
+                        <th>平均扰动</th>
+                        <th>当前功率</th>
+                        <th>状态</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="frame in batch.loadedFrames" :key="frame.id">
+                        <td>{{ formatTime(frame.timestamp) }}</td>
+                        <td>{{ frame.kp?.toFixed(3) }}</td>
+                        <td>{{ frame.ti?.toFixed(1) }}</td>
+                        <td>{{ frame.td?.toFixed(3) }}</td>
+                        <td>{{ frame.iae_60s?.toFixed(2) }}</td>
+                        <td>{{ frame.var_power?.toFixed(2) }}</td>
+                        <td>{{ frame.zero_cross_count }}</td>
+                        <td>{{ frame.avg_disturbance?.toFixed(2) }}</td>
+                        <td>{{ frame.current_power?.toFixed(1) }}</td>
+                        <td>
+                          <span :class="'status-tag status-' + (frame.status_flag || 0)">
+                            {{ statusText(frame.status_flag) }}
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                <div v-else class="batch-loading">点击加载帧数据...</div>
+              </div>
+            </div>
           </div>
+        </div>
+
+        <div v-else class="empty-state">
+          暂无特征帧数据，请等待边缘侧设备上传
         </div>
       </section>
     </main>
@@ -219,15 +298,18 @@ export default {
     return {
       user: null,
       latestFrame: null,
-      frames: [],
+      batches: [],
+      totalFrames: 0,
+      totalBatches: 0,
       pendingCmd: {},
-      frameCount: 0,
       commandCount: 0,
       refreshTimer: null,
       // 设备状态
       deviceStatus: 'offline',
       deviceLabel: '未连接',
       lastSeenAgo: null,
+      // 批次展开状态
+      expandedBatches: {},
       // 下发 PID 指令弹窗
       showCmdModal: false,
       issuing: false,
@@ -283,17 +365,38 @@ export default {
 
     async loadData() {
       try {
-        const [framesRes, latestRes, pendingRes, deviceRes] = await Promise.all([
-          axios.get('/api/frames?limit=50'),
+        const [batchesRes, latestRes, pendingRes, deviceRes] = await Promise.all([
+          axios.get('/api/frames/batches?limit=100'),
           axios.get('/api/frames/latest'),
           axios.get('/api/pending_command'),
           axios.get('/api/device/status')
         ])
 
-        this.frames = framesRes.data || []
+        // 处理批次数据
+        const batchData = batchesRes.data
+        this.batches = batchData.batches || []
+        this.totalFrames = batchData.total_frames || 0
+        this.totalBatches = batchData.total_batches || 0
+
+        // 为每个历史批次添加 loadedFrames 和 loading 状态
+        this.batches.forEach(b => {
+          if (b.batch_index > 0) {
+            if (!('loadedFrames' in b)) {
+              this.$set(b, 'loadedFrames', null)
+            }
+            if (!('loading' in b)) {
+              this.$set(b, 'loading', false)
+            }
+          }
+        })
+
+        // 默认展开最新批次
+        if (this.batches.length > 0) {
+          this.$set(this.expandedBatches, 0, true)
+        }
+
         this.latestFrame = latestRes.data || null
         this.pendingCmd = pendingRes.data || {}
-        this.frameCount = this.frames.length
         this.commandCount = this.pendingCmd.action_batch_id ? 1 : 0
 
         // 设备状态
@@ -304,6 +407,28 @@ export default {
         }
       } catch (err) {
         console.error('[Dashboard] 数据加载失败:', err)
+      }
+    },
+
+    async toggleBatch(batchIndex) {
+      const isExpanded = this.expandedBatches[batchIndex]
+      this.$set(this.expandedBatches, batchIndex, !isExpanded)
+
+      // 如果是展开历史批次且尚未加载数据，则加载
+      if (!isExpanded && batchIndex > 0) {
+        const batch = this.batches.find(b => b.batch_index === batchIndex)
+        if (batch && !batch.loadedFrames) {
+          batch.loading = true
+          try {
+            const res = await axios.get(`/api/frames/batch/${batchIndex}?limit=500`)
+            batch.loadedFrames = res.data.frames || []
+          } catch (err) {
+            console.error(`[Dashboard] 加载批次 ${batchIndex} 失败:`, err)
+            batch.loadedFrames = []
+          } finally {
+            batch.loading = false
+          }
+        }
       }
     },
 
@@ -539,7 +664,7 @@ export default {
   color: #999;
 }
 
-/* 数据表格 */
+/* 批次列表 */
 .data-section {
   background: #fff;
   border-radius: 8px;
@@ -567,6 +692,95 @@ export default {
   font-size: 12px;
 }
 
+.batch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.batch-card {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: box-shadow 0.3s;
+}
+
+.batch-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.batch-active {
+  border-color: #52c41a;
+  background: #f6ffed;
+}
+
+.batch-header {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  cursor: pointer;
+  gap: 16px;
+  user-select: none;
+}
+
+.batch-header:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.batch-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.batch-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.batch-label-0 { color: #52c41a; }
+.batch-label-1 { color: #fa8c16; }
+.batch-label-2 { color: #ff4d4f; }
+.batch-label-3 { color: #999; }
+
+.batch-time {
+  font-size: 12px;
+  color: #999;
+}
+
+.batch-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  color: #666;
+}
+
+.batch-stat {
+  white-space: nowrap;
+}
+
+.batch-toggle {
+  font-size: 12px;
+  color: #999;
+  width: 20px;
+  text-align: center;
+}
+
+.batch-detail {
+  border-top: 1px solid #e8e8e8;
+  padding: 12px 16px;
+  background: #fafafa;
+}
+
+.batch-loading {
+  text-align: center;
+  padding: 20px;
+  color: #999;
+  font-size: 13px;
+}
+
+/* 数据表格 */
 .table-wrapper {
   overflow-x: auto;
 }
@@ -578,24 +792,24 @@ table {
 }
 
 thead th {
-  background: #fafafa;
-  padding: 10px 12px;
+  background: #f0f0f0;
+  padding: 8px 10px;
   text-align: left;
   font-weight: 600;
   color: #666;
-  border-bottom: 2px solid #f0f0f0;
+  border-bottom: 2px solid #e0e0e0;
   white-space: nowrap;
 }
 
 tbody td {
-  padding: 10px 12px;
+  padding: 8px 10px;
   border-bottom: 1px solid #f0f0f0;
   color: #333;
   white-space: nowrap;
 }
 
 tbody tr:hover {
-  background: #fafafa;
+  background: #f5f5f5;
 }
 
 .status-tag {

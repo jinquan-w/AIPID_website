@@ -173,6 +173,135 @@ def get_frames():
     } for f in frames])
 
 
+@app.route('/api/frames/batches', methods=['GET'])
+def get_frame_batches():
+    """
+    获取特征帧批次列表
+    按时间间隔分组：相邻帧间隔 > 60 秒视为不同批次
+    返回批次摘要信息（最新批次包含具体帧数据）
+    """
+    limit = request.args.get('limit', 100, type=int)
+    frames = FeatureFrame.query.order_by(
+        FeatureFrame.timestamp.desc()
+    ).limit(limit).all()
+
+    if not frames:
+        return jsonify({'batches': [], 'total_frames': 0})
+
+    # 按时间间隔分组
+    batches = []
+    current_batch = [frames[0]]
+    GAP_THRESHOLD_MS = 60 * 1000  # 60 秒
+
+    for i in range(1, len(frames)):
+        gap = current_batch[-1].timestamp - frames[i].timestamp
+        if gap > GAP_THRESHOLD_MS:
+            batches.append(current_batch)
+            current_batch = []
+        current_batch.append(frames[i])
+    if current_batch:
+        batches.append(current_batch)
+
+    # 构建返回数据
+    result = []
+    for idx, batch in enumerate(batches):
+        batch_frames = sorted(batch, key=lambda f: f.timestamp)
+        first_ts = batch_frames[0].timestamp
+        last_ts = batch_frames[-1].timestamp
+        avg_iae = sum(f.iae_60s for f in batch_frames) / len(batch_frames)
+        avg_status = max(f.status_flag or 0 for f in batch_frames)
+
+        batch_info = {
+            'batch_index': idx,
+            'frame_count': len(batch_frames),
+            'start_time': first_ts,
+            'end_time': last_ts,
+            'duration_sec': round((last_ts - first_ts) / 1000, 1),
+            'avg_iae_60s': round(avg_iae, 4),
+            'max_status': avg_status,
+            'frames': []
+        }
+
+        # 最新批次（idx==0）包含具体帧数据
+        if idx == 0:
+            batch_info['frames'] = [{
+                'id': f.id,
+                'timestamp': f.timestamp,
+                'action_trace_id': f.action_trace_id,
+                'kp': f.kp, 'ti': f.ti, 'td': f.td,
+                'iae_60s': f.iae_60s, 'var_power': f.var_power,
+                'zero_cross_count': f.zero_cross_count,
+                'avg_disturbance': f.avg_disturbance,
+                'current_power': f.current_power,
+                'rpm_equivalent': f.rpm_equivalent,
+                'status_flag': f.status_flag,
+                'fan_power': getattr(f, 'fan_power', None),
+                'temperature': getattr(f, 'temperature', None),
+                'created_at': f.created_at.isoformat() if f.created_at else None
+            } for f in batch_frames]
+
+        result.append(batch_info)
+
+    return jsonify({
+        'batches': result,
+        'total_frames': len(frames),
+        'total_batches': len(batches)
+    })
+
+
+@app.route('/api/frames/batch/<int:batch_index>', methods=['GET'])
+def get_batch_frames(batch_index):
+    """
+    获取指定批次的所有特征帧
+    重新分组计算，返回该批次的所有帧数据
+    """
+    limit = request.args.get('limit', 500, type=int)
+    frames = FeatureFrame.query.order_by(
+        FeatureFrame.timestamp.desc()
+    ).limit(limit).all()
+
+    if not frames:
+        return jsonify({'frames': [], 'batch_index': batch_index})
+
+    # 重新分组（与 /api/frames/batches 逻辑一致）
+    batches = []
+    current_batch = [frames[0]]
+    GAP_THRESHOLD_MS = 60 * 1000
+
+    for i in range(1, len(frames)):
+        gap = current_batch[-1].timestamp - frames[i].timestamp
+        if gap > GAP_THRESHOLD_MS:
+            batches.append(current_batch)
+            current_batch = []
+        current_batch.append(frames[i])
+    if current_batch:
+        batches.append(current_batch)
+
+    if batch_index < 0 or batch_index >= len(batches):
+        return jsonify({'frames': [], 'batch_index': batch_index}), 404
+
+    batch = sorted(batches[batch_index], key=lambda f: f.timestamp)
+    return jsonify({
+        'batch_index': batch_index,
+        'frame_count': len(batch),
+        'frames': [{
+            'id': f.id,
+            'timestamp': f.timestamp,
+            'action_trace_id': f.action_trace_id,
+            'kp': f.kp, 'ti': f.ti, 'td': f.td,
+            'iae_60s': f.iae_60s, 'var_power': f.var_power,
+            'zero_cross_count': f.zero_cross_count,
+            'avg_disturbance': f.avg_disturbance,
+            'current_power': f.current_power,
+            'rpm_equivalent': f.rpm_equivalent,
+            'status_flag': f.status_flag,
+            'fan_power': getattr(f, 'fan_power', None),
+            'temperature': getattr(f, 'temperature', None),
+            'created_at': f.created_at.isoformat() if f.created_at else None
+        } for f in batch]
+    })
+
+
 @app.route('/api/frames/latest', methods=['GET'])
 def get_latest_frame():
     """获取最新一条特征帧"""
