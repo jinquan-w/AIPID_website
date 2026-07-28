@@ -387,6 +387,8 @@ export default {
       chartInstance: null,
       // 强制刷新计数器
       refreshKey: 0,
+      // 是否已完成首次自动展开（登录后只自动展开一次）
+      _initialExpandDone: false,
       // 下发 PID 指令弹窗
       showCmdModal: false,
       issuing: false,
@@ -475,15 +477,17 @@ export default {
           this.batches = newBatches
 
           // 保留已展开的批次状态（不重置 expandedBatches）
-          // 如果没有任何批次展开，默认展开最新批次
-          const hasAnyExpanded = Object.values(this.expandedBatches).some(v => v === true)
-          if (!hasAnyExpanded) {
-            this.expandedBatches[0] = true
-          }
-
-          // 如果 focusedBatch 未设置，默认聚焦最新批次
-          if (this.focusedBatch === null) {
-            this.focusedBatch = 0
+          // 首次加载时自动展开最新批次，之后保持用户手动状态
+          if (!this._initialExpandDone) {
+            this._initialExpandDone = true
+            const hasAnyExpanded = Object.values(this.expandedBatches).some(v => v === true)
+            if (!hasAnyExpanded) {
+              this.expandedBatches[0] = true
+            }
+            // 首次加载时设置聚焦批次
+            if (this.focusedBatch === null) {
+              this.focusedBatch = 0
+            }
           }
         } else {
           this.batches = []
