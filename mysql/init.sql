@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- -----------------------------------------------------------
 -- 特征帧表（上行 - 边缘侧 → 云端）
--- 存储 PID 运行时的特征数据
+-- 存储 PID 运行时的特征数据，每 5 秒一帧
 -- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS feature_frames (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -49,6 +49,20 @@ CREATE TABLE IF NOT EXISTS feature_frames (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_timestamp (timestamp DESC),
     INDEX idx_status (status_flag)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- -----------------------------------------------------------
+-- 温度记录表（上行 - 边缘侧 → 云端）
+-- 存储设备上传的实时温度数据，每 100ms 一条记录
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS temperature_records (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    timestamp BIGINT UNSIGNED NOT NULL,          -- Unix 毫秒时间戳
+    temperature FLOAT NOT NULL,                  -- 当前温度（℃）
+    target_temperature FLOAT DEFAULT NULL,       -- 目标/设定温度（℃）
+    batch_id INT UNSIGNED DEFAULT NULL,          -- 关联的批次 ID（可选）
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_temp_timestamp (timestamp DESC, batch_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- -----------------------------------------------------------

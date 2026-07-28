@@ -21,7 +21,7 @@ class User(db.Model):
 class FeatureFrame(db.Model):
     """
     特征帧表（上行数据）
-    存储边缘侧上传的 PID 运行特征数据
+    存储边缘侧上传的 PID 运行特征数据，每 5 秒一帧
     """
     __tablename__ = 'feature_frames'
 
@@ -46,6 +46,25 @@ class FeatureFrame(db.Model):
     status_flag = db.Column(db.SmallInteger)        # 状态标志
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class TemperatureRecord(db.Model):
+    """
+    温度记录表
+    存储设备上传的实时温度数据，每 100ms 一条记录
+    """
+    __tablename__ = 'temperature_records'
+
+    id = db.Column(db.BigInteger, primary_key=True, autoincrement=True)
+    timestamp = db.Column(db.BigInteger, nullable=False)  # Unix ms
+    temperature = db.Column(db.Float, nullable=False)      # 当前温度（℃）
+    target_temperature = db.Column(db.Float, nullable=True)  # 目标/设定温度（℃）
+    batch_id = db.Column(db.Integer, nullable=True)        # 关联的批次 ID（可选）
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.Index('idx_temp_timestamp', 'timestamp', 'batch_id'),
+    )
 
 
 class DownlinkCommand(db.Model):

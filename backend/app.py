@@ -5,7 +5,7 @@ AIPID 温控系统 - Flask 后端主应用
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from config import Config
-from models import db, User, FeatureFrame, DownlinkCommand
+from models import db, User, FeatureFrame, TemperatureRecord, DownlinkCommand
 import bcrypt
 from datetime import datetime, timedelta
 import time
@@ -235,8 +235,6 @@ def get_frame_batches():
                 'current_power': f.current_power,
                 'rpm_equivalent': f.rpm_equivalent,
                 'status_flag': f.status_flag,
-                'fan_power': getattr(f, 'fan_power', None),
-                'temperature': getattr(f, 'temperature', None),
                 'created_at': f.created_at.isoformat() if f.created_at else None
             } for f in batch_frames]
 
@@ -295,8 +293,6 @@ def get_batch_frames(batch_index):
             'current_power': f.current_power,
             'rpm_equivalent': f.rpm_equivalent,
             'status_flag': f.status_flag,
-            'fan_power': getattr(f, 'fan_power', None),
-            'temperature': getattr(f, 'temperature', None),
             'created_at': f.created_at.isoformat() if f.created_at else None
         } for f in batch]
     })
@@ -416,6 +412,146 @@ def get_commands():
         'issued_at': c.issued_at.isoformat() if c.issued_at else None,
         'applied': c.applied
     } for c in cmds])
+
+
+# ============================================================
+#  温度记录（上行 - 边缘侧 → 云端）
+#  设备每 100ms 上传一次实时温度
+# ============================================================
+
+@app.route('/api/upload_temperature', methods=['POST'])
+def upload_temperature():
+    """接收边缘侧上传的实时温度数据（100ms 间隔）"""
+    data = request.json
+    if not data or 'timestamp' not in data or 'temperature' not in data:
+        return jsonify({'error': 'Missing required fields: timestamp, temperature'}), 400
+
+    record = TemperatureRecord(
+        timestamp=data['timestamp'],
+        temperature=data['temperature'],
+        target_temperature=data.get('target_temperature'),
+        batch_id=data.get('batch_id')
+    )
+    db.session.add(record)
+    db.session.commit()
+    return jsonify({'status': 'ok', 'id': record.id})
+
+
+@app.route('/api/upload_temperatures', methods=['POST'])
+def upload_temperatures():
+    """
+    批量接收边缘侧上传的实时温度数据
+    支持一次上传多条记录，减少 HTTP 请求次数
+    请求体: {"records": [{"timestamp": ..., "temperature": ..., ...}, ...]}
+    """
+    data = request.json
+    if not data or 'records' not in data or not isinstance(data['records'], list):
+        return jsonify({'error': 'Missing or invalid records'}), 400
+
+    records = []
+    for r in data['records']:
+        if 'timestamp' not in r or 'temperature' not in r:
+            continue
+        records.append(TemperatureRecord(
+            timestamp=r['timestamp'],
+            temperature=r['temperature'],
+            target_temperature=r.get('target_temperature'),
+            batch_id=r.get('batch_id')
+        ))
+
+    if not records:
+        return jsonify({'error': 'No valid records'}), 400
+
+    db.session.add_all(records)
+    db.session.commit()
+    return jsonify({'status': 'ok', 'count': len(records)})
+
+
+@app.route('/api/temperatures/latest', methods=['GET'])
+def get_latest_temperature():
+    """获取最新一条温度记录"""
+    record = TemperatureRecord.query.order_by(
+        TemperatureRecord.timestamp.desc()
+    ).first()
+    if not record:
+        return jsonify({}), 404
+    return jsonify({
+        'id': record.id,
+        'timestamp': record.timestamp,
+        'temperature': record.temperature,
+        'target_temperature': record.target_temperature,
+        'batch_id': record.batch_id
+    })
+
+
+@app.route('/api/temperatures', methods=['GET'])
+def get_temperatures():
+    """
+    获取温度记录
+    参数:
+      - limit: 返回条数（默认 500）
+      - since: 起始时间戳（Unix ms，可选）
+      - until: 结束时间戳（Unix ms，可选）
+      - batch_id: 批次 ID（可选）
+    """
+    limit = request.args.get('limit', 500, type=int)
+    since = request.args.get('since', type=int)
+    until = request.args.get('until', type=int)
+    batch_id = request.args.get('batch_id', type=int)
+
+    query = TemperatureRecord.query
+
+    if since:
+        query = query.filter(TemperatureRecord.timestamp >= since)
+    if until:
+        query = query.filter(TemperatureRecord.timestamp <= until)
+    if batch_id is not None:
+        query = query.filter(TemperatureRecord.batch_id == batch_id)
+
+    records = query.order_by(TemperatureRecord.timestamp.desc()).limit(limit).all()
+
+    return jsonify([{
+        'id': r.id,
+        'timestamp': r.timestamp,
+        'temperature': r.temperature,
+        'target_temperature': r.target_temperature,
+        'batch_id': r.batch_id
+    } for r in records])
+
+
+@app.route('/api/temperatures/range', methods=['GET'])
+def get_temperature_range():
+    """
+    获取指定时间范围内的温度记录（按时间升序排列）
+    参数:
+      - start: 起始时间戳（Unix ms）
+      - end: 结束时间戳（Unix ms）
+      - max_points: 最大返回点数（默认 1000，超出则降采样）
+    """
+    start = request.args.get('start', type=int)
+    end = request.args.get('end', type=int)
+    max_points = request.args.get('max_points', 1000, type=int)
+
+    if not start or not end:
+        return jsonify({'error': 'start and end are required'}), 400
+
+    query = TemperatureRecord.query.filter(
+        TemperatureRecord.timestamp >= start,
+        TemperatureRecord.timestamp <= end
+    ).order_by(TemperatureRecord.timestamp.asc())
+
+    records = query.all()
+
+    # 如果记录数超过 max_points，进行降采样
+    if len(records) > max_points:
+        step = len(records) // max_points
+        records = records[::step]
+
+    return jsonify([{
+        'timestamp': r.timestamp,
+        'temperature': r.temperature,
+        'target_temperature': r.target_temperature
+    } for r in records])
 
 
 # ============================================================
